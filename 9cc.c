@@ -44,6 +44,11 @@ struct Node {
     int val;       // kindがND_NUMの場合のみ使う
 };
 
+// 関数の宣言
+Node *expr();
+Node *mul();
+Node *primary();
+
 // 四則演算の演算子をノードにする。二項演算子なので左辺と右辺が存在
 Node *new_node(NodeKind kind, Node *lhs, Node *rhs) {
     Node *node = calloc(1, sizeof(Node));
@@ -139,7 +144,12 @@ Token *tokenize(char *p) {
             continue;
         }
 
-        if (*p == '+' || *p == '-') {
+        if (*p == '+' || *p == '-' || *p == '*' || *p == '/') {
+            cur = new_token(TK_RESERVED, cur, p++);
+            continue;
+        }
+
+        if (*p == '(' || *p ==')') {
             cur = new_token(TK_RESERVED, cur, p++);
             continue;
         }
@@ -198,38 +208,60 @@ Node *primary() {
     return new_node_num(expect_number());
 }
 
+// 抽象構文木を探索してスタックマシンとして計算を実装
+void gen(Node *node) {
+    if(node->kind == ND_NUM) {
+        printf("    push %d\n", node->val);
+        return;
+    }
+
+    gen(node->lhs);
+    gen(node->rhs);
+
+    printf("    pop rdi\n");
+    printf("    pop rax\n");
+
+    switch (node->kind)
+    {
+    case ND_ADD:
+        printf("    add rax, rdi\n");
+        break;
+    case ND_SUB:
+        printf("    sub rax, rdi\n");
+        break;
+    case ND_MUL:
+        printf("    imul rax, rdi\n");
+        break;
+    case ND_DIV:
+        printf("    cqo\n");
+        printf("    idiv rdi\n");
+        break;
+    }
+
+    printf("    push rax\n");
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
-        fprintf(stderr, "引数の個数が正しくありません\n");
+        error("引数の個数が正しくありません\n");
         return 1;
     }
 
-    // ユーザー入力の保存
+    // トークナイズしてパースする
     user_input = argv[1];
-
-    // トークナイズする
-    token = tokenize(argv[1]);
+    token = tokenize(user_input);
+    Node *node = expr();
 
     // アセンブリの前半部分を出力
     printf(".intel_syntax noprefix\n");
     printf(".globl main\n");
     printf("main:\n");
 
-    // 式の最初は数でなければならないので、それをチェックして最初のmov命令を出力
-    printf("    mov rax, %d\n", expect_number());
+    // 抽象構文木を下りながらコード生成
+    gen(node);
 
-    // `+ <数>`あるいは`- <数>`というトークンの並びを消費しつつアセンブリを出力
-    while (!at_eof())
-    {
-        if (consume('+')) {
-            printf("    add rax, %d\n", expect_number());
-            continue;
-        }
-
-        expect('-');
-        printf("    sub rax, %d\n", expect_number());
-    }
-    
+    // スタックトップの式全体の計算結果をRAXにロードして関数からの返り値とする
+    printf("    pop rax\n");    
     printf("    ret\n");
     return 0;
 }
